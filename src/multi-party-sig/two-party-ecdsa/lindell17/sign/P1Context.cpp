@@ -119,14 +119,14 @@ bool P1Context::Step3(const std::string &in_msg) {
 
     const safeheron::bignum::BN &q = curv->n;
 
-    safeheron::bignum::BN k1_inv = k1_.InvM(q);
-    safeheron::bignum::BN s_prime = key_share_.pail_priv_.Decrypt(p2_msg2.c3_);
-
     const safeheron::bignum::BN q2 = q * q;
     const safeheron::bignum::BN q3 = q * q * q;
 
-    // s = (k2_inv * r * x2 + k2_inv * m) mod q + ((k2_inv * r) mod q) * (x1 + q) + rho*q
-    if (s_ > q3 + q2 * 2 - q * 3 ) return false;
+    safeheron::bignum::BN k1_inv = k1_.InvM(q);
+    safeheron::bignum::BN s_prime = key_share_.pail_priv_.Decrypt(p2_msg2.c3_);
+
+    // s_prime = (k2_inv * r * x2 + k2_inv * m) mod q + ((k2_inv * r) mod q) * (x1 + q) + rho*q
+    if (s_prime > q3 + q2 * 2 - q * 3 ) return false;
     s_ = (k1_inv * s_prime) % q;
 
     v_ = (R_.y().IsOdd() ? 1 : 0) | ((R_.x() != r_) ? 2 : 0);
