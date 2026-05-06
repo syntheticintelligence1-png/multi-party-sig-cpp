@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/MultiPartySigSgxTargets.cmake")
+
+message(STATUS "MultiPartySigSgx: Loading package.")
+set_and_check(MultiPartySigSgx_INCLUDE_DIR  "${PACKAGE_PREFIX_DIR}/include")
+set_and_check(MultiPartySigSgx_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
+set_and_check(MultiPartySigSgx_LIBRARY_DIR  "${PACKAGE_PREFIX_DIR}/lib")
+get_target_property(MultiPartySigSgx_LIBRARY MultiPartySigSgx IMPORTED_LOCATION)
+if(NOT MultiPartySigSgx_LIBRARY)
+    get_target_property(MultiPartySigSgx_LIBRARY MultiPartySigSgx IMPORTED_LOCATION_RELEASE)
+endif()
+
+if(NOT MultiPartySigSgx_LIBRARY)
+    message(FATAL_ERROR "Could not determine library location for target MultiPartySigSgx.")
+else()
+    set_and_check(MultiPartySigSgx_LIBRARY "${MultiPartySigSgx_LIBRARY}")
+    message(STATUS "Found MultiPartySigSgx: ${MultiPartySigSgx_LIBRARY}")
+endif()
