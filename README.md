@@ -63,7 +63,9 @@ Hint: The STARK Curve is a new curve used by STARK Ware. It is a 256-bit curve w
 
 # Build and Install
 
-Linux and Mac are supported now.  After obtaining the Source, have a look at the installation script.
+Linux and Mac are supported now. In addition, it supports the Intel SGX trusted computing platform. After obtaining the Source, have a look at the installation script.
+
+## Build for Default Platform (non-SGX)
 
 ```shell
 git clone https://github.com/safeheron/multi-party-sig-cpp.git
@@ -92,6 +94,17 @@ The macros are listed as follows:
 option(NO_MPC_GG18 "NO_MPC_GG18" OFF)
 option(NO_MPC_GG20 "NO_MPC_GG20" OFF)
 option(NO_MPC_MPC_CMP "NO_MPC_CMP" OFF)
+```
+
+## Build for SGX Platform
+
+Prerequisites: [ssgx](https://github.com/safeheron/ssgx) and [safeheron-crypto-suites-cpp](https://github.com/safeheron/safeheron-crypto-suites-cpp) must be built and installed for SGX first.
+
+```shell
+mkdir build-sgx && cd build-sgx
+cmake .. -DPLATFORM=SGX -DCMAKE_INSTALL_PREFIX=/opt/safeheron/ssgx
+make -j
+sudo make install
 ```
 
 More platforms such as Windows would be supported soon.
