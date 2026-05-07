@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.10)
 
-project("MultiPartySig" VERSION 1.0.1)
+if (DEFINED PLATFORM AND NOT PLATFORM STREQUAL "SGX")
+    message(FATAL_ERROR "Unsupported PLATFORM: ${PLATFORM}. Only 'SGX' is supported, or leave it unset for the default platform.")
+endif()
+
+if (PLATFORM STREQUAL "SGX")
+    project("MultiPartySigSgx" VERSION 1.1.0)
+else()
+    project("MultiPartySig" VERSION 1.1.0)
+endif()
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_BUILD_TYPE "Release")
@@ -22,13 +30,26 @@ include_directories(src)
 
 cmake_policy(SET CMP0076 NEW)
 cmake_policy(SET CMP0079 NEW)
-add_library(${CMAKE_PROJECT_NAME} SHARED "")
+
+if (PLATFORM STREQUAL "SGX")
+    list(APPEND CMAKE_PREFIX_PATH "/opt/safeheron/ssgx")
+    find_package(ssgx REQUIRED)
+    find_package(SafeheronCryptoSuitesSgx REQUIRED)
+    ssgx_add_trusted_library(${CMAKE_PROJECT_NAME}
+        TRUSTED_LIBS SafeheronCryptoSuitesSgx
+    )
+else()
+    add_library(${CMAKE_PROJECT_NAME} SHARED "")
+endif()
+
 add_subdirectory(src)
 
-option(ENABLE_TESTS "Enable tests" OFF)
-if (${ENABLE_TESTS})
-    enable_testing()
-    add_subdirectory(test)
+if (NOT PLATFORM STREQUAL "SGX")
+    option(ENABLE_TESTS "Enable tests" OFF)
+    if (${ENABLE_TESTS})
+        enable_testing()
+        add_subdirectory(test)
+    endif()
 endif()
 
 include("cmake/setup_installation.cmake")
