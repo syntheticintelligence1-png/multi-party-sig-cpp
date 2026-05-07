@@ -5,9 +5,9 @@ if (DEFINED PLATFORM AND NOT PLATFORM STREQUAL "SGX")
 endif()
 
 if (PLATFORM STREQUAL "SGX")
-    project("MultiPartySigSgx" VERSION 1.0.1)
+    project("MultiPartySigSgx" VERSION 1.1.0)
 else()
-    project("MultiPartySig" VERSION 1.0.1)
+    project("MultiPartySig" VERSION 1.1.0)
 endif()
 
 set(CMAKE_CXX_STANDARD 11)
