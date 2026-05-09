@@ -103,7 +103,7 @@ Prerequisites: [ssgx](https://github.com/safeheron/ssgx) and [safeheron-crypto-s
 ```shell
 mkdir build-sgx && cd build-sgx
 cmake .. -DPLATFORM=SGX -DCMAKE_INSTALL_PREFIX=/opt/safeheron/ssgx
-make -j
+make
 sudo make install
 ```
 
