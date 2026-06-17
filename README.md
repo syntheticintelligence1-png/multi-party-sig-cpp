@@ -22,6 +22,7 @@ The library implements three different mpc protocols for threshold ECDSA now.
     - Sign: Generates an ECDSA signature for specified message.
 - Lindell17[\[7\]](#Reference): A classical two-party ECDSA protocol originates from Lindell ’17 [\[7\]](#Reference). It is a threshold ECDSA signature scheme specifically designed for two-party computation (2PC) scenarios.
   This release is a variant of Lindell 17 protocol based on the additive secret sharing, please consult the following "Important Tips" section for the specific differences on protocol.
+  ⚠️ It follows the "security with abort" model and requires abort monitoring on the integrator side; see [SECURITY_NOTICE.md](./src/multi-party-sig/two-party-ecdsa/lindell17/SECURITY_NOTICE.md) before integrating.
     - Key Generation:  Generate the private key shard for Party 1 and Party 2 respectively.
     - Sign: Generates an ECDSA signature for specified message.
 
@@ -426,6 +427,8 @@ At the end of the MPC Procedure, each signer will get the secret share which cou
 Refer to the [test case](./test/cmp/sign_t_n_mt_test.cpp) for more details.
 
 ## Lindell 17
+
+> ⚠️ **Security Notice:** this implementation follows the "security with abort" model and requires abort monitoring on the integrator side. Read [SECURITY_NOTICE.md](./src/multi-party-sig/two-party-ecdsa/lindell17/SECURITY_NOTICE.md) before integrating.
 
 ### Key Generation
 
