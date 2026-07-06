@@ -1,0 +1,69 @@
+name: False-Identification POC  
+  
+on:  
+  push:  
+    branches: ["**"]  
+  workflow_dispatch:  
+  
+jobs:  
+  poc:  
+    runs-on: ubuntu-22.04  
+    steps:  
+      - uses: actions/checkout@v4  
+        with:  
+          submodules: recursive  
+  
+      - name: Cache protobuf  
+        id: cache-protobuf  
+        uses: actions/cache@v4  
+        with:  
+          path: /usr/local  
+          key: protobuf-3.20.0  
+  
+      - name: Build protobuf 3.20.0  
+        if: steps.cache-protobuf.outputs.cache-hit != 'true'  
+        run: |  
+          wget -q https://github.com/protocolbuffers/protobuf/releases/download/v3.20.0/protobuf-cpp-3.20.0.tar.gz  
+          tar -xzf protobuf-cpp-3.20.0.tar.gz  
+          cd protobuf-3.20.0  
+          ./configure --prefix=/usr/local  
+          make -j2  
+          sudo make install  
+          sudo ldconfig  
+  
+      - name: Cache safeheron-crypto-suites  
+        id: cache-crypto  
+        uses: actions/cache@v4  
+        with:  
+          path: safeheron-crypto-suites-cpp/build  
+          key: crypto-suites-${{ runner.os }}-v1  
+  
+      - name: Build safeheron-crypto-suites-cpp  
+        if: steps.cache-crypto.outputs.cache-hit != 'true'  
+        run: |  
+          git clone https://github.com/safeheron/safeheron-crypto-suites-cpp.git  
+          cd safeheron-crypto-suites-cpp  
+          git submodule update --recursive --init  
+          mkdir build && cd build  
+          cmake .. -DCMAKE_PREFIX_PATH=/usr/local  
+          make -j2  
+          sudo make install  
+          sudo ldconfig  
+  
+      - name: Install safeheron-crypto-suites (from cache)  
+        if: steps.cache-crypto.outputs.cache-hit == 'true'  
+        run: |  
+          cd safeheron-crypto-suites-cpp/build  
+          sudo make install  
+          sudo ldconfig  
+  
+      - name: Build multi-party-sig-cpp tests  
+        run: |  
+          mkdir build && cd build  
+          cmake .. -DENABLE_TESTS=ON -DCMAKE_PREFIX_PATH=/usr/local  
+          make -j2 cmp.sign_test  
+  
+      - name: Run POC  
+        run: |  
+          cd build  
+          ./test/cmp/cmp.sign_test --gtest_filter="CoSign.Sign_n_n" 2>&1
