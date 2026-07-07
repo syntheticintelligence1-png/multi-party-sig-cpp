@@ -39,10 +39,10 @@ jobs:
           key: crypto-suites-${{ runner.os }}-v1  
   
       - name: Build safeheron-crypto-suites-cpp  
-        if: steps.cache-crypto.outputs.cache-hit != 'true'  
         run: |  
-          git clone https://github.com/safeheron/safeheron-crypto-suites-cpp.git  
-          cd safeheron-crypto-suites-cpp  
+          rm -rf /tmp/safeheron-crypto-suites-cpp  
+          git clone https://github.com/safeheron/safeheron-crypto-suites-cpp.git /tmp/safeheron-crypto-suites-cpp  
+          cd /tmp/safeheron-crypto-suites-cpp  
           git submodule update --recursive --init  
           mkdir build && cd build  
           cmake .. -DCMAKE_PREFIX_PATH=/usr/local  
